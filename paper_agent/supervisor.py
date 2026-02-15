@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable, TypeVar
 
-from langchain_openai import ChatOpenAI
+from langchain_core.language_models.chat_models import BaseChatModel
 
 from .models import StageAttempt, WorkflowState
 from .subagents import DirectionAgent, OutlineAgent, ResearchAgent, ReviewerAgent, WriterAgent
@@ -13,7 +13,7 @@ T = TypeVar("T")
 class PaperSupervisor:
     def __init__(
         self,
-        llm: ChatOpenAI,
+        llm: BaseChatModel,
         max_retries_per_stage: int = 1,
         search_provider: str = "duckduckgo",
         research_top_k: int = 8,

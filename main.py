@@ -4,15 +4,19 @@ import argparse
 import os
 from pathlib import Path
 
-from langchain_openai import ChatOpenAI
+from dotenv import load_dotenv
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 from paper_agent import PaperSupervisor
 
 
-def build_llm() -> ChatOpenAI:
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-    temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.2"))
-    return ChatOpenAI(model=model, temperature=temperature)
+load_dotenv()
+
+
+def build_llm() -> ChatGoogleGenerativeAI:
+    model = os.getenv("GOOGLE_MODEL", "gemini-2.5-flash")
+    temperature = float(os.getenv("GOOGLE_TEMPERATURE", "0.2"))
+    return ChatGoogleGenerativeAI(model=model, temperature=temperature)
 
 
 def render_markdown(state) -> str:
@@ -54,8 +58,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError("Missing OPENAI_API_KEY.")
+    if not os.getenv("GOOGLE_API_KEY"):
+        raise RuntimeError("Missing GOOGLE_API_KEY.")
 
     llm = build_llm()
     supervisor = PaperSupervisor(

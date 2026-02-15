@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from typing import Optional
 
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
 
 from .models import (
     DirectionResult,
@@ -29,7 +29,7 @@ def _to_json(payload: object) -> str:
 
 
 class DirectionAgent:
-    def __init__(self, llm: ChatOpenAI) -> None:
+    def __init__(self, llm: BaseChatModel) -> None:
         prompt = ChatPromptTemplate.from_messages(
             [
                 (
@@ -54,7 +54,7 @@ class DirectionAgent:
 class ResearchAgent:
     def __init__(
         self,
-        llm: ChatOpenAI,
+        llm: BaseChatModel,
         search_provider: str = "duckduckgo",
         search_top_k: int = 8,
     ) -> None:
@@ -127,7 +127,7 @@ class ResearchAgent:
 
 
 class OutlineAgent:
-    def __init__(self, llm: ChatOpenAI) -> None:
+    def __init__(self, llm: BaseChatModel) -> None:
         prompt = ChatPromptTemplate.from_messages(
             [
                 (
@@ -162,7 +162,7 @@ class OutlineAgent:
 
 
 class WriterAgent:
-    def __init__(self, llm: ChatOpenAI) -> None:
+    def __init__(self, llm: BaseChatModel) -> None:
         prompt = ChatPromptTemplate.from_messages(
             [
                 (
@@ -201,7 +201,7 @@ class WriterAgent:
 
 
 class ReviewerAgent:
-    def __init__(self, llm: ChatOpenAI) -> None:
+    def __init__(self, llm: BaseChatModel) -> None:
         prompt = ChatPromptTemplate.from_messages(
             [
                 (
