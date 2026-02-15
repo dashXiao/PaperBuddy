@@ -13,6 +13,7 @@ from .models import (
     ResearchResult,
     ReviewResult,
 )
+from .research_tools import ResearchSearcher, SearchSnippet
 
 
 def _feedback_block(feedback: Optional[str]) -> str:
@@ -51,7 +52,13 @@ class DirectionAgent:
 
 
 class ResearchAgent:
-    def __init__(self, llm: ChatOpenAI) -> None:
+    def __init__(
+        self,
+        llm: ChatOpenAI,
+        search_provider: str = "duckduckgo",
+        search_top_k: int = 8,
+    ) -> None:
+        self.searcher = ResearchSearcher(provider=search_provider, top_k=search_top_k)
         prompt = ChatPromptTemplate.from_messages(
             [
                 (
@@ -59,21 +66,64 @@ class ResearchAgent:
                     "你正在一个多代理论文系统中工作，整体目标是产出一篇完整论文草稿。"
                     "你是 Research subagent，负责基于论文方向生成结构化信息卡片。"
                     "你的输出会交给 OutlineAgent 和 WriterAgent 使用，必须服务研究问题和论点。"
+                    "你会收到查询词与外部检索片段，优先使用这些可追溯来源。"
                     "每条信息要有来源描述和可信度备注。"
-                    "如果没有外部检索工具，请明确使用通识与方法性信息，不编造具体不可验证事实。",
+                    "若提供了来源链接，请填入 url 字段。"
+                    "不要编造不存在的来源链接。检索结果不足时，在 gaps 明确写缺口。",
                 ),
                 (
                     "human",
-                    "论文方向：\n{direction}\n\n{feedback}",
+                    "论文方向：\n{direction}\n\n检索查询词：\n{queries}\n\n外部检索片段：\n{search_context}\n\n{feedback}",
                 ),
             ]
         )
         self._chain = prompt | llm.with_structured_output(ResearchResult)
 
     def run(self, direction: DirectionResult, feedback: Optional[str] = None) -> ResearchResult:
+        queries = self._build_queries(direction)
+        snippets = self.searcher.search(queries)
+        context = self._format_search_context(snippets)
         return self._chain.invoke(
-            {"direction": _to_json(direction), "feedback": _feedback_block(feedback)}
+            {
+                "direction": _to_json(direction),
+                "queries": "\n".join(f"- {q}" for q in queries),
+                "search_context": context,
+                "feedback": _feedback_block(feedback),
+            }
         )
+
+    @staticmethod
+    def _build_queries(direction: DirectionResult) -> list[str]:
+        keywords = [k.strip() for k in direction.keywords if k.strip()]
+        queries = [
+            direction.refined_topic.strip(),
+            direction.research_question.strip(),
+        ]
+        if keywords:
+            queries.append(" ".join(keywords[:4]))
+            queries.append(f"{direction.research_question.strip()} {' '.join(keywords[:2])}")
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for query in queries:
+            if not query or query in seen:
+                continue
+            seen.add(query)
+            deduped.append(query)
+        return deduped[:5]
+
+    @staticmethod
+    def _format_search_context(snippets: list[SearchSnippet]) -> str:
+        if not snippets:
+            return "无外部检索结果。请在输出中明确资料缺口，并避免虚构来源。"
+        lines: list[str] = []
+        for idx, item in enumerate(snippets, start=1):
+            lines.append(f"[{idx}] {item.title}")
+            lines.append(f"URL: {item.url}")
+            if item.snippet:
+                lines.append(f"摘要片段: {item.snippet}")
+            lines.append("")
+        return "\n".join(lines).strip()
 
 
 class OutlineAgent:

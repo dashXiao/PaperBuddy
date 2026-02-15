@@ -40,13 +40,30 @@ def main() -> None:
         default=1,
         help="每个阶段允许重试次数",
     )
+    parser.add_argument(
+        "--search-provider",
+        default="duckduckgo",
+        choices=["duckduckgo", "none"],
+        help="ResearchAgent 检索源（duckduckgo 或 none）",
+    )
+    parser.add_argument(
+        "--research-top-k",
+        type=int,
+        default=8,
+        help="ResearchAgent 最多保留的外部检索条数",
+    )
     args = parser.parse_args()
 
     if not os.getenv("OPENAI_API_KEY"):
         raise RuntimeError("Missing OPENAI_API_KEY.")
 
     llm = build_llm()
-    supervisor = PaperSupervisor(llm=llm, max_retries_per_stage=args.max_retries_per_stage)
+    supervisor = PaperSupervisor(
+        llm=llm,
+        max_retries_per_stage=args.max_retries_per_stage,
+        search_provider=args.search_provider,
+        research_top_k=args.research_top_k,
+    )
     state = supervisor.generate(topic=args.topic)
 
     output_path = Path(args.output)

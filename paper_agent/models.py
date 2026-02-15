@@ -19,6 +19,7 @@ class EvidenceItem(BaseModel):
     """单条证据信息卡：记录来源、要点和可信度说明。"""
 
     source: str = Field(description="来源名称或出处描述")
+    url: Optional[str] = Field(default=None, description="来源链接（若可用）")
     source_type: str = Field(description="来源类型，例如 paper/report/book/web")
     key_points: list[str] = Field(default_factory=list, description="关键信息点")
     reliability_note: str = Field(description="对可信度的简要说明")

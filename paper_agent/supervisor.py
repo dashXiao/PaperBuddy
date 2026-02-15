@@ -11,10 +11,20 @@ T = TypeVar("T")
 
 
 class PaperSupervisor:
-    def __init__(self, llm: ChatOpenAI, max_retries_per_stage: int = 1) -> None:
+    def __init__(
+        self,
+        llm: ChatOpenAI,
+        max_retries_per_stage: int = 1,
+        search_provider: str = "duckduckgo",
+        research_top_k: int = 8,
+    ) -> None:
         self.max_retries_per_stage = max_retries_per_stage
         self.direction_agent = DirectionAgent(llm)
-        self.research_agent = ResearchAgent(llm)
+        self.research_agent = ResearchAgent(
+            llm,
+            search_provider=search_provider,
+            search_top_k=research_top_k,
+        )
         self.outline_agent = OutlineAgent(llm)
         self.writer_agent = WriterAgent(llm)
         self.reviewer_agent = ReviewerAgent(llm)
@@ -38,6 +48,7 @@ class PaperSupervisor:
             criteria=(
                 "1) 至少提供若干条结构化信息卡。2) 每条有来源描述。"
                 "3) 关键点支撑研究问题。4) 标注可信度与缺口。"
+                "5) 来源应可追溯（若有链接则提供）。"
             ),
             producer=lambda feedback: self.research_agent.run(
                 direction=state.direction, feedback=feedback
