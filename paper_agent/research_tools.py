@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import warnings
+import os
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable
 
-warnings.filterwarnings(
-    "ignore",
-    message=r"This package \(`duckduckgo_search`\) has been renamed to `ddgs`!.*",
-    category=RuntimeWarning,
-)
+from tavily import TavilyClient
 
 
 @dataclass
@@ -21,47 +17,45 @@ class SearchSnippet:
 
 
 class ResearchSearcher:
-    """轻量检索器：当前支持 duckduckgo 和 none。"""
+    """轻量检索器：当前固定使用 Tavily。"""
 
-    def __init__(self, provider: str = "duckduckgo", top_k: int = 8) -> None:
-        self.provider = provider
+    def __init__(self, top_k: int = 8) -> None:
         self.top_k = top_k
+        api_key = os.getenv("TAVILY_API_KEY")
+        if not api_key:
+            raise RuntimeError("Missing TAVILY_API_KEY for Tavily search.")
+        self._client = TavilyClient(api_key=api_key)
 
     def search(self, queries: list[str]) -> list[SearchSnippet]:
-        if self.provider == "none":
-            return []
-        if self.provider != "duckduckgo":
-            raise ValueError(f"Unsupported search provider: {self.provider}")
-
-        raw_items = self._duckduckgo_search(queries)
+        raw_items = self._tavily_search(queries)
         return self._deduplicate(raw_items)[: self.top_k]
 
-    def _duckduckgo_search(self, queries: list[str]) -> list[SearchSnippet]:
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", RuntimeWarning)
-                from duckduckgo_search import DDGS
-        except Exception:
-            return []
-
+    def _tavily_search(self, queries: list[str]) -> list[SearchSnippet]:
         items: list[SearchSnippet] = []
-        per_query = max(2, self.top_k // max(1, len(queries)))
+        errors: list[str] = []
+        per_query = max(5, self.top_k)
         for query in queries:
             try:
-                with warnings.catch_warnings():
-                    # duckduckgo_search emits a rename RuntimeWarning in recent versions.
-                    warnings.simplefilter("ignore", RuntimeWarning)
-                    with DDGS() as ddgs:
-                        results = ddgs.text(query, max_results=per_query)
-                        for row in results:
-                            title = (row.get("title") or "").strip()
-                            url = (row.get("href") or "").strip()
-                            snippet = (row.get("body") or "").strip()
-                            if not title or not url:
-                                continue
-                            items.append(SearchSnippet(title=title, url=url, snippet=snippet))
-            except Exception:
+                payload: dict[str, Any] = self._client.search(
+                    query=query,
+                    max_results=per_query,
+                    topic="general",
+                    include_raw_content=False,
+                )
+                for row in payload.get("results", []):
+                    title = str(row.get("title") or "").strip()
+                    url = str(row.get("url") or "").strip()
+                    snippet = str(row.get("content") or row.get("snippet") or "").strip()
+                    if not title or not url:
+                        continue
+                    items.append(SearchSnippet(title=title, url=url, snippet=snippet))
+            except Exception as exc:
+                errors.append(f"{query}: {exc}")
                 continue
+        if not items and errors:
+            raise RuntimeError(
+                "Tavily search failed for all queries: " + " | ".join(errors[:3])
+            ) from None
         return items
 
     @staticmethod

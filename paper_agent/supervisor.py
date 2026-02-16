@@ -15,16 +15,11 @@ class PaperSupervisor:
         self,
         llm: BaseChatModel,
         max_retries_per_stage: int = 1,
-        search_provider: str = "duckduckgo",
         research_top_k: int = 8,
     ) -> None:
         self.max_retries_per_stage = max_retries_per_stage
         self.direction_agent = DirectionAgent(llm)
-        self.research_agent = ResearchAgent(
-            llm,
-            search_provider=search_provider,
-            search_top_k=research_top_k,
-        )
+        self.research_agent = ResearchAgent(llm, search_top_k=research_top_k)
         self.outline_agent = OutlineAgent(llm)
         self.writer_agent = WriterAgent(llm)
         self.reviewer_agent = ReviewerAgent(llm)

@@ -55,10 +55,9 @@ class ResearchAgent:
     def __init__(
         self,
         llm: BaseChatModel,
-        search_provider: str = "duckduckgo",
         search_top_k: int = 8,
     ) -> None:
-        self.searcher = ResearchSearcher(provider=search_provider, top_k=search_top_k)
+        self.searcher = ResearchSearcher(top_k=search_top_k)
         prompt = ChatPromptTemplate.from_messages(
             [
                 (
@@ -82,6 +81,10 @@ class ResearchAgent:
     def run(self, direction: DirectionResult, feedback: Optional[str] = None) -> ResearchResult:
         queries = self._build_queries(direction)
         snippets = self.searcher.search(queries)
+        if not snippets:
+            raise RuntimeError(
+                "ResearchAgent failed: no external search results were retrieved; aborting workflow."
+            )
         context = self._format_search_context(snippets)
         return self._chain.invoke(
             {

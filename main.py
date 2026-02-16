@@ -32,7 +32,7 @@ def render_markdown(state) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="MVP paper-writing agent with LangChain subagents.")
-    parser.add_argument("topic", help="宽泛论文题目，例如：AI 对教育公平的影响")
+    parser.add_argument("topic", default="高碳水饮食对人的影响", help="宽泛论文题目，例如：AI 对教育公平的影响")
     parser.add_argument(
         "--output",
         default="output/paper.md",
@@ -45,12 +45,6 @@ def main() -> None:
         help="每个阶段允许重试次数",
     )
     parser.add_argument(
-        "--search-provider",
-        default="duckduckgo",
-        choices=["duckduckgo", "none"],
-        help="ResearchAgent 检索源（duckduckgo 或 none）",
-    )
-    parser.add_argument(
         "--research-top-k",
         type=int,
         default=8,
@@ -60,12 +54,13 @@ def main() -> None:
 
     if not os.getenv("GOOGLE_API_KEY"):
         raise RuntimeError("Missing GOOGLE_API_KEY.")
+    if not os.getenv("TAVILY_API_KEY"):
+        raise RuntimeError("Missing TAVILY_API_KEY.")
 
     llm = build_llm()
     supervisor = PaperSupervisor(
         llm=llm,
         max_retries_per_stage=args.max_retries_per_stage,
-        search_provider=args.search_provider,
         research_top_k=args.research_top_k,
     )
     state = supervisor.generate(topic=args.topic)
