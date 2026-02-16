@@ -21,7 +21,20 @@ class EvidenceItem(BaseModel):
     source: str = Field(description="来源名称或出处描述")
     url: Optional[str] = Field(default=None, description="来源链接（若可用）")
     source_type: str = Field(description="来源类型，例如 paper/report/book/web")
-    key_points: list[str] = Field(default_factory=list, description="关键信息点")
+
+    class PointEvidence(BaseModel):
+        """单条论点-证据绑定：一个 key_point 对应一个或多个支持段落。"""
+
+        key_point: str = Field(description="从原文段落总结得到的关键信息点")
+        source_passages: list[str] = Field(
+            default_factory=list,
+            description="支持该 key_point 的一个或多个原文段落（可拼接）",
+        )
+
+    point_evidences: list[PointEvidence] = Field(
+        default_factory=list,
+        description="论点与对应原文段落的绑定列表",
+    )
     reliability_note: str = Field(description="对可信度的简要说明")
 
 
@@ -30,6 +43,18 @@ class ResearchResult(BaseModel):
 
     findings: list[EvidenceItem] = Field(default_factory=list, description="信息卡片集合")
     gaps: list[str] = Field(default_factory=list, description="尚未覆盖但应关注的缺口")
+
+
+class SourceArtifact(BaseModel):
+    """采集阶段落盘的单条来源文件元数据。"""
+
+    source_id: str = Field(description="来源唯一编号，例如 S001")
+    title: str = Field(description="来源标题")
+    url: str = Field(description="来源链接")
+    query: str = Field(description="命中的检索 query")
+    json_path: str = Field(description="原始资料 JSON 文件路径")
+    md_path: str = Field(description="原始资料 Markdown 文件路径")
+    text_chars: int = Field(ge=0, description="原始文本长度（字符数）")
 
 
 class SectionPlan(BaseModel):
@@ -86,6 +111,7 @@ class WorkflowState(BaseModel):
     topic: str
     direction: Optional[DirectionResult] = None
     research: Optional[ResearchResult] = None
+    source_artifacts: list[SourceArtifact] = Field(default_factory=list)
     outline: Optional[OutlineResult] = None
     draft: Optional[DraftResult] = None
     review_log: list[StageAttempt] = Field(default_factory=list)

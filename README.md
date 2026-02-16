@@ -4,10 +4,11 @@
 
 核心流程：
 1. `DirectionAgent`：收敛论文方向
-2. `ResearchAgent`：先检索，再生成结构化资料卡（可追溯来源）
-3. `OutlineAgent`：形成论文大纲
-4. `WriterAgent`：生成整篇草稿
-5. `ReviewerAgent`（由 `Supervisor` 调用）：逐阶段评审并触发重试
+2. `SourceCollectorAgent`：检索并把来源文本落盘到 `output/*sources/*`
+3. `EvidenceExtractorAgent`：逐文件提取“观点-来源段落”证据卡（写入 `paper.state.json`）
+4. `OutlineAgent`：形成论文大纲
+5. `WriterAgent`：生成整篇草稿
+6. `ReviewerAgent`（由 `Supervisor` 调用）：逐阶段评审并触发重试
 
 ## 目录结构
 
@@ -67,6 +68,8 @@ python3 main.py "题目" --output output/topic_a.md
 默认输出：
 - 论文草稿：`output/paper.md`
 - 工作流状态：`output/paper.state.json`
+- 来源文本文件：`output/paper.sources/<run_id>/*.json|*.md`
+- 来源清单：`output/paper.sources/<run_id>/manifest.json`
 
 参数说明（与当前代码一致）：
 - `--output`：论文草稿输出路径（默认 `output/paper.md`）
@@ -76,11 +79,13 @@ python3 main.py "题目" --output output/topic_a.md
 注意：
 - 不传 `--output` 时，再次运行会覆盖 `output/paper.md` 与 `output/paper.state.json`。
 - `GOOGLE_API_KEY` 或 `TAVILY_API_KEY` 缺失时程序会直接报错退出。
-- 检索源固定为 Tavily，`ResearchAgent` 若未检索到任何外部内容会直接报错并终止程序。
+- 检索源固定为 Tavily，`SourceCollectorAgent` 若未检索到任何外部内容会直接报错并终止程序。
 
 ## 设计说明（MVP）
 
 - 简化优先：重点演示多 subagent 分工与 supervisor 监管，不追求最强写作质量。
 - 结构化输出：每个 subagent 使用 `with_structured_output` 输出 Pydantic 模型，便于主流程校验。
 - 可控回退：每阶段支持固定次数重试（`--max-retries-per-stage`）。
-- 轻量检索：`ResearchAgent` 固定使用 Tavily，并将检索片段注入 prompt。
+- 研究拆分：检索采集与证据提取分离，先落盘原始文本，再逐文件抽取观点卡。
+- 证据对齐：`ResearchResult.findings[*].point_evidences[*]` 中每个 `key_point` 都绑定 `source_passages`（1+ 段原文）并传给后续 agents。
+- 观点卡只存 `paper.state.json`，不额外单独输出证据卡文件。

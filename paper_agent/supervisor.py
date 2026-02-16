@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable, TypeVar
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from .models import StageAttempt, WorkflowState
+from .models import ResearchResult, SourceArtifact, StageAttempt, WorkflowState
 from .subagents import DirectionAgent, OutlineAgent, ResearchAgent, ReviewerAgent, WriterAgent
 
 T = TypeVar("T")
@@ -24,7 +25,7 @@ class PaperSupervisor:
         self.writer_agent = WriterAgent(llm)
         self.reviewer_agent = ReviewerAgent(llm)
 
-    def generate(self, topic: str) -> WorkflowState:
+    def generate(self, topic: str, artifacts_root: Path) -> WorkflowState:
         state = WorkflowState(topic=topic)
 
         state.direction = self._run_stage(
@@ -37,6 +38,8 @@ class PaperSupervisor:
             producer=lambda feedback: self.direction_agent.run(topic=topic, feedback=feedback),
         )
 
+        latest_artifacts = state.source_artifacts
+
         state.research = self._run_stage(
             state=state,
             stage_name="research",
@@ -44,9 +47,15 @@ class PaperSupervisor:
                 "1) 至少提供若干条结构化信息卡。2) 每条有来源描述。"
                 "3) 关键点支撑研究问题。4) 标注可信度与缺口。"
                 "5) 来源应可追溯（若有链接则提供）。"
+                "6) point_evidences 中每个 key_point 必须有 1+ 条 source_passages 原文段落支持。"
+                "7) 同一信息卡内不同 key_point 的 source_passages 不重复，且不跨来源混用。"
+                "8) 采集阶段已把来源文本落盘到 output 路径下，且可回溯。"
             ),
-            producer=lambda feedback: self.research_agent.run(
-                direction=state.direction, feedback=feedback
+            producer=lambda feedback: self._run_research_with_artifacts(
+                state=state,
+                artifacts_root=artifacts_root,
+                latest_artifacts=latest_artifacts,
+                feedback=feedback,
             ),
         )
 
@@ -112,3 +121,21 @@ class PaperSupervisor:
 
         assert result is not None
         return result
+
+    def _run_research_with_artifacts(
+        self,
+        state: WorkflowState,
+        artifacts_root: Path,
+        latest_artifacts: list[SourceArtifact],
+        feedback: str | None,
+    ) -> ResearchResult:
+        assert state.direction is not None
+        research_result, source_artifacts = self.research_agent.run(
+            direction=state.direction,
+            artifacts_root=artifacts_root,
+            feedback=feedback,
+        )
+        latest_artifacts.clear()
+        latest_artifacts.extend(source_artifacts)
+        state.source_artifacts = list(latest_artifacts)
+        return research_result

@@ -32,7 +32,7 @@ def render_markdown(state) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="MVP paper-writing agent with LangChain subagents.")
-    parser.add_argument("topic", default="高碳水饮食对人的影响", help="宽泛论文题目，例如：AI 对教育公平的影响")
+    parser.add_argument("topic", help="宽泛论文题目")
     parser.add_argument(
         "--output",
         default="output/paper.md",
@@ -63,10 +63,12 @@ def main() -> None:
         max_retries_per_stage=args.max_retries_per_stage,
         research_top_k=args.research_top_k,
     )
-    state = supervisor.generate(topic=args.topic)
-
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    artifacts_root = output_path.parent / f"{output_path.stem}.sources"
+
+    state = supervisor.generate(topic=args.topic, artifacts_root=artifacts_root)
+
     output_path.write_text(render_markdown(state), encoding="utf-8")
 
     state_path = output_path.with_suffix(".state.json")
