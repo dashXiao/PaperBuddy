@@ -5,8 +5,16 @@ from typing import Callable, TypeVar
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from .models import ResearchResult, SourceArtifact, StageAttempt, WorkflowState
-from .subagents import DirectionAgent, OutlineAgent, ResearchAgent, ReviewerAgent, WriterAgent
+from .models import DirectionResult, ResearchResult, StageAttempt, WorkflowState
+from .subagents import (
+    CollectedSource,
+    DirectionAgent,
+    EvidenceExtractorAgent,
+    OutlineAgent,
+    ReviewerAgent,
+    SourceCollectorAgent,
+    WriterAgent,
+)
 
 T = TypeVar("T")
 
@@ -20,7 +28,8 @@ class PaperSupervisor:
     ) -> None:
         self.max_retries_per_stage = max_retries_per_stage
         self.direction_agent = DirectionAgent(llm)
-        self.research_agent = ResearchAgent(llm, search_top_k=research_top_k)
+        self.source_collector_agent = SourceCollectorAgent(search_top_k=research_top_k)
+        self.evidence_extractor_agent = EvidenceExtractorAgent(llm)
         self.outline_agent = OutlineAgent(llm)
         self.writer_agent = WriterAgent(llm)
         self.reviewer_agent = ReviewerAgent(llm)
@@ -40,21 +49,27 @@ class PaperSupervisor:
 
         latest_artifacts = state.source_artifacts
 
+        collected_sources, source_artifacts = self.source_collector_agent.run(
+            direction=state.direction,
+            artifacts_root=artifacts_root,
+        )
+        latest_artifacts.clear()
+        latest_artifacts.extend(source_artifacts)
+        state.source_artifacts = list(latest_artifacts)
+
         state.research = self._run_stage(
             state=state,
-            stage_name="research",
+            stage_name="evidence_extract",
             criteria=(
                 "1) 至少提供若干条结构化信息卡。2) 每条有来源描述。"
                 "3) 关键点支撑研究问题。4) 标注可信度与缺口。"
                 "5) 来源应可追溯（若有链接则提供）。"
                 "6) point_evidences 中每个 key_point 必须有 1+ 条 source_passages 原文段落支持。"
                 "7) 同一信息卡内不同 key_point 的 source_passages 不重复，且不跨来源混用。"
-                "8) 采集阶段已把来源文本落盘到 output 路径下，且可回溯。"
             ),
-            producer=lambda feedback: self._run_research_with_artifacts(
-                state=state,
-                artifacts_root=artifacts_root,
-                latest_artifacts=latest_artifacts,
+            producer=lambda feedback: self._run_evidence_extraction(
+                direction=state.direction,
+                collected_sources=collected_sources,
                 feedback=feedback,
             ),
         )
@@ -122,20 +137,30 @@ class PaperSupervisor:
         assert result is not None
         return result
 
-    def _run_research_with_artifacts(
+    def _run_evidence_extraction(
         self,
-        state: WorkflowState,
-        artifacts_root: Path,
-        latest_artifacts: list[SourceArtifact],
+        direction: DirectionResult,
+        collected_sources: list[CollectedSource],
         feedback: str | None,
     ) -> ResearchResult:
-        assert state.direction is not None
-        research_result, source_artifacts = self.research_agent.run(
-            direction=state.direction,
-            artifacts_root=artifacts_root,
-            feedback=feedback,
-        )
-        latest_artifacts.clear()
-        latest_artifacts.extend(source_artifacts)
-        state.source_artifacts = list(latest_artifacts)
-        return research_result
+        findings = []
+        gaps: list[str] = []
+
+        for source in collected_sources:
+            try:
+                item = self.evidence_extractor_agent.run(direction=direction, source=source, feedback=feedback)
+            except Exception as exc:
+                gaps.append(f"{source.source_id} 提取失败：{exc}")
+                continue
+
+            if not item.point_evidences:
+                gaps.append(f"{source.source_id} 未提取到有效观点。")
+                continue
+            findings.append(item)
+
+        if not findings:
+            raise RuntimeError(
+                "EvidenceExtractorAgent failed: sources were collected but no usable evidence cards were extracted."
+            )
+
+        return ResearchResult(findings=findings, gaps=gaps)

@@ -684,48 +684,6 @@ class EvidenceExtractorAgent:
         return item
 
 
-class ResearchAgent:
-    """Research 编排代理：先采集落盘，再逐文件提取观点卡。"""
-
-    def __init__(
-        self,
-        llm: BaseChatModel,
-        search_top_k: int = 8,
-    ) -> None:
-        self.collector = SourceCollectorAgent(search_top_k=search_top_k)
-        self.extractor = EvidenceExtractorAgent(llm)
-
-    def run(
-        self,
-        direction: DirectionResult,
-        artifacts_root: Path,
-        feedback: Optional[str] = None,
-    ) -> tuple[ResearchResult, list[SourceArtifact]]:
-        collected, artifacts = self.collector.run(direction=direction, artifacts_root=artifacts_root)
-
-        findings: list[EvidenceItem] = []
-        gaps: list[str] = []
-
-        for source in collected:
-            try:
-                item = self.extractor.run(direction=direction, source=source, feedback=feedback)
-            except Exception as exc:
-                gaps.append(f"{source.source_id} 提取失败：{exc}")
-                continue
-
-            if not item.point_evidences:
-                gaps.append(f"{source.source_id} 未提取到有效观点。")
-                continue
-            findings.append(item)
-
-        if not findings:
-            raise RuntimeError(
-                "ResearchAgent failed: sources were collected but no usable evidence cards were extracted."
-            )
-
-        return ResearchResult(findings=findings, gaps=gaps), artifacts
-
-
 class OutlineAgent:
     def __init__(self, llm: BaseChatModel) -> None:
         prompt = ChatPromptTemplate.from_messages(
