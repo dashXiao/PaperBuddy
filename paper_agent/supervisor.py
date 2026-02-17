@@ -34,8 +34,14 @@ class PaperSupervisor:
         self.writer_agent = WriterAgent(llm)
         self.reviewer_agent = ReviewerAgent(llm)
 
+    @staticmethod
+    def _log(stage: str, message: str) -> None:
+        print(f"[{stage}] {message}")
+
     def generate(self, topic: str, artifacts_root: Path) -> WorkflowState:
         state = WorkflowState(topic=topic)
+        self._log("workflow", "start")
+        self._log("workflow", f"topic: {topic}")
 
         state.direction = self._run_stage(
             state=state,
@@ -49,6 +55,7 @@ class PaperSupervisor:
 
         latest_artifacts = state.source_artifacts
 
+        self._log("source_collect", "SourceCollectorAgent running")
         collected_sources, source_artifacts = self.source_collector_agent.run(
             direction=state.direction,
             artifacts_root=artifacts_root,
@@ -56,6 +63,7 @@ class PaperSupervisor:
         latest_artifacts.clear()
         latest_artifacts.extend(source_artifacts)
         state.source_artifacts = list(latest_artifacts)
+        self._log("source_collect", f"done: {len(source_artifacts)} sources")
 
         state.research = self._run_stage(
             state=state,
@@ -102,6 +110,7 @@ class PaperSupervisor:
                 feedback=feedback,
             ),
         )
+        self._log("workflow", "done")
 
         return state
 
@@ -115,9 +124,12 @@ class PaperSupervisor:
         feedback: str | None = None
         result: T | None = None
         total_attempts = self.max_retries_per_stage + 1
+        self._log(stage_name, "start")
 
         for attempt in range(1, total_attempts + 1):
+            self._log(stage_name, f"attempt {attempt}/{total_attempts}")
             result = producer(feedback)
+            self._log(stage_name, "ReviewerAgent reviewing")
             review = self.reviewer_agent.review(stage=stage_name, criteria=criteria, output_payload=result)
             state.review_log.append(
                 StageAttempt(
@@ -129,12 +141,16 @@ class PaperSupervisor:
                     suggestions=review.suggestions,
                 )
             )
+            self._log(stage_name, f"review score={review.score} passed={review.passed}")
             if review.passed:
+                self._log(stage_name, "passed")
                 return result
 
             feedback = "\n".join(review.suggestions or review.issues)
+            self._log(stage_name, "retrying")
 
         assert result is not None
+        self._log(stage_name, "max retries reached; continue with last result")
         return result
 
     def _run_evidence_extraction(
@@ -145,8 +161,10 @@ class PaperSupervisor:
     ) -> ResearchResult:
         findings = []
         gaps: list[str] = []
+        total = len(collected_sources)
 
-        for source in collected_sources:
+        for index, source in enumerate(collected_sources, start=1):
+            self._log("evidence_extract", f"EvidenceExtractorAgent source {index}/{total} ({source.source_id})")
             try:
                 item = self.evidence_extractor_agent.run(direction=direction, source=source, feedback=feedback)
             except Exception as exc:
@@ -163,4 +181,5 @@ class PaperSupervisor:
                 "EvidenceExtractorAgent failed: sources were collected but no usable evidence cards were extracted."
             )
 
+        self._log("evidence_extract", f"done: findings={len(findings)} gaps={len(gaps)}")
         return ResearchResult(findings=findings, gaps=gaps)
