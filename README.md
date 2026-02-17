@@ -20,8 +20,21 @@
 │   ├── __init__.py
 │   ├── models.py
 │   ├── research_tools.py
-│   ├── subagents.py
+│   ├── subagents
+│   │   ├── __init__.py
+│   │   ├── common.py
+│   │   ├── direction_agent.py
+│   │   ├── evidence_extractor_agent.py
+│   │   ├── outline_agent.py
+│   │   ├── reviewer_agent.py
+│   │   ├── source_collector_agent.py
+│   │   ├── types.py
+│   │   └── writer_agent.py
 │   └── supervisor.py
+├── script
+│   ├── __init__.py
+│   ├── output.py
+│   └── runtime.py
 └── requirements.txt
 ```
 
@@ -74,7 +87,7 @@ python3 main.py "题目" --output output/topic_a.md
 参数说明（与当前代码一致）：
 - `--output`：论文草稿输出路径（默认 `output/paper.md`）
 - `--max-retries-per-stage`：每阶段最大重试次数（默认 `1`）
-- `--research-top-k`：Research 阶段保留的外部检索条数（默认 `8`）
+- `--research-top-k`：`SourceCollectorAgent` 保留的外部检索条数（默认 `8`）
 
 注意：
 - 不传 `--output` 时，再次运行会覆盖 `output/paper.md` 与 `output/paper.state.json`。
