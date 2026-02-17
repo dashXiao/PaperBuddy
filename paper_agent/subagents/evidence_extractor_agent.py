@@ -8,12 +8,11 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 
 from ..models import DirectionResult, EvidenceItem
-from .common import _feedback_block, _to_json
-from .types import CollectedSource
+from .common import CollectedSource, _feedback_block, _to_json
 
 
 class EvidenceExtractorAgent:
-    """Research 子代理 2：逐文件提取“观点-来源段落”卡。"""
+    """逐文件提取“观点-来源段落”卡。"""
 
     def __init__(self, llm: BaseChatModel) -> None:
         prompt = ChatPromptTemplate.from_messages(

@@ -7,11 +7,11 @@ from pathlib import Path
 
 from ..models import DirectionResult, SourceArtifact
 from ..research_tools import ResearchSearcher, SearchDocument
-from .types import CollectedSource
+from .common import CollectedSource
 
 
 class SourceCollectorAgent:
-    """Research 子代理 1：检索并落盘原始资料文件。"""
+    """检索并落盘原始资料文件。"""
 
     _INVALID_TEXT_PATTERNS = [
         "access denied",
