@@ -9,10 +9,10 @@ from .models import DirectionResult, ResearchResult, StageAttempt, WorkflowState
 from .subagents import (
     CollectedSource,
     DirectionAgent,
-    EvidenceExtractorAgent,
+    ExtractorAgent,
     OutlineAgent,
     ReviewerAgent,
-    SourceCollectorAgent,
+    SearchAgent,
     WriterAgent,
 )
 
@@ -28,8 +28,8 @@ class PaperSupervisor:
     ) -> None:
         self.max_retries_per_stage = max_retries_per_stage
         self.direction_agent = DirectionAgent(llm)
-        self.source_collector_agent = SourceCollectorAgent(search_top_k=research_top_k)
-        self.evidence_extractor_agent = EvidenceExtractorAgent(llm)
+        self.search_agent = SearchAgent(search_top_k=research_top_k)
+        self.extractor_agent = ExtractorAgent(llm)
         self.outline_agent = OutlineAgent(llm)
         self.writer_agent = WriterAgent(llm)
         self.reviewer_agent = ReviewerAgent(llm)
@@ -55,19 +55,19 @@ class PaperSupervisor:
 
         latest_artifacts = state.source_artifacts
 
-        self._log("source_collect", "SourceCollectorAgent running")
-        collected_sources, source_artifacts = self.source_collector_agent.run(
+        self._log("search", "SearchAgent running")
+        collected_sources, source_artifacts = self.search_agent.run(
             direction=state.direction,
             artifacts_root=artifacts_root,
         )
         latest_artifacts.clear()
         latest_artifacts.extend(source_artifacts)
         state.source_artifacts = list(latest_artifacts)
-        self._log("source_collect", f"done: {len(source_artifacts)} sources")
+        self._log("search", f"done: {len(source_artifacts)} sources")
 
         state.research = self._run_stage(
             state=state,
-            stage_name="evidence_extract",
+            stage_name="extract",
             criteria=(
                 "1) 至少提供若干条结构化信息卡。2) 每条有来源描述。"
                 "3) 关键点支撑研究问题。4) 标注可信度与缺口。"
@@ -75,7 +75,7 @@ class PaperSupervisor:
                 "6) point_evidences 中每个 key_point 必须有 1+ 条 source_passages 原文段落支持。"
                 "7) 同一信息卡内不同 key_point 的 source_passages 不重复，且不跨来源混用。"
             ),
-            producer=lambda feedback: self._run_evidence_extraction(
+            producer=lambda feedback: self._run_extract(
                 direction=state.direction,
                 collected_sources=collected_sources,
                 feedback=feedback,
@@ -153,7 +153,7 @@ class PaperSupervisor:
         self._log(stage_name, "max retries reached; continue with last result")
         return result
 
-    def _run_evidence_extraction(
+    def _run_extract(
         self,
         direction: DirectionResult,
         collected_sources: list[CollectedSource],
@@ -164,9 +164,9 @@ class PaperSupervisor:
         total = len(collected_sources)
 
         for index, source in enumerate(collected_sources, start=1):
-            self._log("evidence_extract", f"EvidenceExtractorAgent source {index}/{total} ({source.source_id})")
+            self._log("extract", f"ExtractorAgent source {index}/{total} ({source.source_id})")
             try:
-                item = self.evidence_extractor_agent.run(direction=direction, source=source, feedback=feedback)
+                item = self.extractor_agent.run(direction=direction, source=source, feedback=feedback)
             except Exception as exc:
                 gaps.append(f"{source.source_id} 提取失败：{exc}")
                 continue
@@ -178,8 +178,8 @@ class PaperSupervisor:
 
         if not findings:
             raise RuntimeError(
-                "EvidenceExtractorAgent failed: sources were collected but no usable evidence cards were extracted."
+                "ExtractorAgent failed: sources were collected but no usable evidence cards were extracted."
             )
 
-        self._log("evidence_extract", f"done: findings={len(findings)} gaps={len(gaps)}")
+        self._log("extract", f"done: findings={len(findings)} gaps={len(gaps)}")
         return ResearchResult(findings=findings, gaps=gaps)

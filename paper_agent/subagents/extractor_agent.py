@@ -11,7 +11,7 @@ from ..models import DirectionResult, EvidenceItem
 from .common import CollectedSource, _feedback_block, _to_json
 
 
-class EvidenceExtractorAgent:
+class ExtractorAgent:
     """逐文件提取“观点-来源段落”卡。"""
 
     def __init__(self, llm: BaseChatModel) -> None:
@@ -20,7 +20,7 @@ class EvidenceExtractorAgent:
                 (
                     "system",
                     "你正在一个多代理论文系统中工作，整体目标是产出一篇完整论文草稿。"
-                    "你是 EvidenceExtractor subagent，负责分析单个来源文件并提取证据卡。"
+                    "你是 Extractor subagent，负责分析单个来源文件并提取证据卡。"
                     "你只处理一个来源，不要混入其他来源内容。"
                     "输出格式是 EvidenceItem，必须使用 point_evidences。"
                     "每个 point_evidences 包含 key_point 与 source_passages。"

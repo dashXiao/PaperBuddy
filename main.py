@@ -12,7 +12,7 @@ def main() -> None:
     parser.add_argument("topic", help="宽泛论文题目")
     parser.add_argument("--output", default="output/paper.md", help="输出路径")
     parser.add_argument("--max-retries-per-stage", type=int, default=0, help="每个阶段允许重试次数")
-    parser.add_argument("--research-top-k", type=int, default=5, help="SourceCollectorAgent 搜索条目数")
+    parser.add_argument("--research-top-k", type=int, default=5, help="SearchAgent 搜索条目数")
     args = parser.parse_args()
 
     output_path, artifacts_root = prepare_output_paths(args.output)

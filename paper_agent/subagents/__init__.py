@@ -1,17 +1,17 @@
 from .common import CollectedSource
 from .direction_agent import DirectionAgent
-from .evidence_extractor_agent import EvidenceExtractorAgent
+from .extractor_agent import ExtractorAgent
 from .outline_agent import OutlineAgent
 from .reviewer_agent import ReviewerAgent
-from .source_collector_agent import SourceCollectorAgent
+from .search_agent import SearchAgent
 from .writer_agent import WriterAgent
 
 __all__ = [
     "CollectedSource",
     "DirectionAgent",
-    "EvidenceExtractorAgent",
+    "ExtractorAgent",
     "OutlineAgent",
     "ReviewerAgent",
-    "SourceCollectorAgent",
+    "SearchAgent",
     "WriterAgent",
 ]

@@ -10,7 +10,7 @@ from ..research_tools import ResearchSearcher, SearchDocument
 from .common import CollectedSource
 
 
-class SourceCollectorAgent:
+class SearchAgent:
     """检索并落盘原始资料文件。"""
 
     _INVALID_TEXT_PATTERNS = [
@@ -52,7 +52,7 @@ class SourceCollectorAgent:
         backup_queries = self._build_backup_queries(direction, primary_queries)
         docs = self._collect_candidates(primary_queries, backup_queries)
         if not docs:
-            raise RuntimeError("SourceCollectorAgent failed: no search results were retrieved.")
+            raise RuntimeError("SearchAgent failed: no search results were retrieved.")
 
         run_dir = self._build_run_dir(artifacts_root)
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -143,7 +143,7 @@ class SourceCollectorAgent:
 
         if not collected:
             raise RuntimeError(
-                "SourceCollectorAgent failed: search returned items but none passed the minimum text length filter."
+                "SearchAgent failed: search returned items but none passed the minimum text length filter."
             )
 
         manifest_path = run_dir / "manifest.json"
