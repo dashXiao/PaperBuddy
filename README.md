@@ -4,8 +4,8 @@
 
 核心流程：
 1. `DirectionAgent`：收敛论文方向
-2. `SourceCollectorAgent`：检索并把来源文本落盘到 `output/*sources/*`
-3. `EvidenceExtractorAgent`：逐文件提取“观点-来源段落”证据卡（写入 `paper.state.json`）
+2. `SearchAgent`：检索并把来源文本落盘到 `output/*sources/*`
+3. `ExtractorAgent`：逐文件提取“观点-来源段落”证据卡（写入 `paper.state.json`）
 4. `OutlineAgent`：形成论文大纲
 5. `WriterAgent`：生成整篇草稿
 6. `ReviewerAgent`（由 `Supervisor` 调用）：逐阶段评审并触发重试
@@ -24,11 +24,10 @@
 │   │   ├── __init__.py
 │   │   ├── common.py
 │   │   ├── direction_agent.py
-│   │   ├── evidence_extractor_agent.py
+│   │   ├── extractor_agent.py
 │   │   ├── outline_agent.py
 │   │   ├── reviewer_agent.py
-│   │   ├── source_collector_agent.py
-│   │   ├── types.py
+│   │   ├── search_agent.py
 │   │   └── writer_agent.py
 │   └── supervisor.py
 ├── script
@@ -86,13 +85,13 @@ python3 main.py "题目" --output output/topic_a.md
 
 参数说明（与当前代码一致）：
 - `--output`：论文草稿输出路径（默认 `output/paper.md`）
-- `--max-retries-per-stage`：每阶段最大重试次数（默认 `1`）
-- `--research-top-k`：`SourceCollectorAgent` 保留的外部检索条数（默认 `8`）
+- `--max-retries-per-stage`：每阶段最大重试次数（默认 `0`）
+- `--research-top-k`：`SearchAgent` 保留的外部检索条数（默认 `5`）
 
 注意：
 - 不传 `--output` 时，再次运行会覆盖 `output/paper.md` 与 `output/paper.state.json`。
 - `GOOGLE_API_KEY` 或 `TAVILY_API_KEY` 缺失时程序会直接报错退出。
-- 检索源固定为 Tavily，`SourceCollectorAgent` 若未检索到任何外部内容会直接报错并终止程序。
+- 检索源固定为 Tavily，`SearchAgent` 若未检索到任何外部内容会直接报错并终止程序。
 
 ## 设计说明（MVP）
 
