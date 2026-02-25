@@ -19,7 +19,6 @@
 ├── paper_agent
 │   ├── __init__.py
 │   ├── models.py
-│   ├── research_tools.py
 │   ├── subagents
 │   │   ├── __init__.py
 │   │   ├── common.py
