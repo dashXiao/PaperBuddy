@@ -25,6 +25,5 @@ class CollectedSource:
     title: str
     url: str
     snippet: str
-    raw_text: str
     json_path: Path
     md_path: Path

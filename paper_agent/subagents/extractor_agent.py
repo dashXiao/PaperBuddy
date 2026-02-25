@@ -47,7 +47,7 @@ class ExtractorAgent:
         source: CollectedSource,
         feedback: Optional[str] = None,
     ) -> EvidenceItem:
-        source_text = self._prepare_text_for_llm(source.raw_text)
+        source_text = self._prepare_text_for_llm(source.snippet)
         result = self._chain.invoke(
             {
                 "direction": _to_json(direction),
@@ -245,7 +245,7 @@ class ExtractorAgent:
         item: EvidenceItem,
         source: CollectedSource,
     ) -> EvidenceItem:
-        source_paragraphs = cls._split_paragraphs(source.raw_text)
+        source_paragraphs = cls._split_paragraphs(source.snippet)
 
         item.source = source.title
         item.url = source.url
