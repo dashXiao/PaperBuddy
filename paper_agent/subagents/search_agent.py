@@ -1,151 +1,264 @@
 from __future__ import annotations
 
 import json
-import re
+import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import ToolMessage
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+from pydantic import BaseModel, Field
+from tavily import TavilyClient
 
 from ..models import DirectionResult, SourceArtifact
-from ..research_tools import ResearchSearcher, SearchDocument
-from .common import CollectedSource
+from .common import CollectedSource, _to_json
+
+SEARCH_TOOL_NAME = "tavily_search_tool"
+PERSIST_TOOL_NAME = "persist_sources_tool"
+
+
+# 搜索工具的入参结构。
+class TavilySearchToolInput(BaseModel):
+    queries: list[str] = Field(default_factory=list)
+    top_k: int = Field(default=8, ge=1)
+
+
+# 落盘工具的入参结构。
+class PersistSourcesToolInput(BaseModel):
+    run_dir: str
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    discarded: list[dict[str, Any]] = Field(default_factory=list)
+
+
+@tool(SEARCH_TOOL_NAME, args_schema=TavilySearchToolInput)
+def tavily_search_tool(queries: list[str], top_k: int = 8) -> str:
+    """Use Tavily to search documents and return JSON string results."""
+
+    # 按 query 批量检索并聚合候选结果。
+    client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+    bounded_top_k = max(1, top_k)
+    per_query = max(5, bounded_top_k)
+    items: list[dict[str, str]] = []
+    errors: list[str] = []
+
+    for query in queries:
+        try:
+            payload: dict[str, Any] = client.search(
+                query=query,
+                max_results=per_query,
+                topic="general",
+                include_raw_content=True,
+            )
+            for row in payload.get("results", []):
+                title = str(row.get("title") or "").strip()
+                url = str(row.get("url") or "").strip()
+                snippet = str(row.get("content") or row.get("snippet") or "").strip()
+                raw_content = str(row.get("raw_content") or "").strip()
+                if not title or not url:
+                    continue
+                raw_text = (raw_content or snippet)[:3500] # 避免字段过长
+                items.append(
+                    {
+                        "title": title,
+                        "url": url,
+                        "snippet": snippet,
+                        "raw_content": raw_text,
+                        "query": query,
+                    }
+                )
+        except Exception as exc:
+            errors.append(f"{query}: {exc}")
+
+    if not items and errors:
+        raise RuntimeError("Tavily search failed for all queries: " + " | ".join(errors[:3]))
+
+    # 对 URL 去重后截断到 top_k。
+    deduped: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    for item in items:
+        url = item["url"]
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+        deduped.append(item)
+
+    return json.dumps(deduped[:bounded_top_k], ensure_ascii=False)
+
+
+@tool(PERSIST_TOOL_NAME, args_schema=PersistSourcesToolInput)
+def persist_sources_tool(
+    run_dir: str,
+    sources: list[dict[str, Any]],
+    discarded: list[dict[str, Any]] | None = None,
+) -> str:
+    """Persist cleaned sources to JSON/Markdown and return written metadata."""
+
+    # 将清洗后的来源写成与现有流程一致的 JSON/Markdown 格式。
+    run_path = Path(run_dir)
+    run_path.mkdir(parents=True, exist_ok=True)
+
+    persisted: list[dict[str, Any]] = []
+    for index, source in enumerate(sources, start=1):
+        source_id = f"S{index:03d}"
+        title = str(source.get("title") or "").strip()
+        url = str(source.get("url") or "").strip()
+        query = str(source.get("query") or "").strip()
+        snippet = str(source.get("snippet") or "").strip()
+        raw_text = str(source.get("raw_text") or "").strip()
+        if not raw_text:
+            continue
+        text_chars = int(source.get("text_chars") or len(raw_text))
+
+        json_path = run_path / f"{source_id}.json"
+        md_path = run_path / f"{source_id}.md"
+
+        payload = {
+            "source_id": source_id,
+            "query": query,
+            "title": title,
+            "url": url,
+            "snippet": snippet,
+            "raw_text": raw_text,
+            "retrieved_at": datetime.now(timezone.utc).isoformat(),
+        }
+        json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        md_content = (
+            f"# {title}\n\n"
+            f"- source_id: {source_id}\n"
+            f"- query: {query}\n"
+            f"- url: {url}\n\n"
+            f"## Snippet\n{snippet or 'N/A'}\n\n"
+            f"## Raw Text\n{raw_text}\n"
+        )
+        md_path.write_text(md_content, encoding="utf-8")
+
+        persisted.append(
+            {
+                "source_id": source_id,
+                "title": title,
+                "url": url,
+                "query": query,
+                "snippet": snippet,
+                "raw_text": raw_text,
+                "text_chars": text_chars,
+                "json_path": str(json_path),
+                "md_path": str(md_path),
+            }
+        )
+
+    return json.dumps(
+        {
+            "sources": persisted,
+            "discarded": discarded or [],
+        },
+        ensure_ascii=False,
+    )
 
 
 class SearchAgent:
-    """检索并落盘原始资料文件。"""
-
-    _INVALID_TEXT_PATTERNS = [
-        "access denied",
-        "403 forbidden",
-        "404 not found",
-        "captcha",
-        "cloudflare",
-        "enable javascript",
-        "javascript required",
-        "please enable javascript",
-        "just a moment",
-        "验证失败",
-        "请完成验证",
-        "暂无权限",
-        "页面不存在",
-        "内容不存在",
-        "无法访问",
-        "无法读取",
-    ]
+    """Search subagent: tool-calls search, filters results, and persists artifacts."""
 
     def __init__(
         self,
+        llm: BaseChatModel,
         search_top_k: int = 8,
         min_source_chars: int = 400,
         oversample_factor: int = 4,
+        max_tool_rounds: int = 6,
     ) -> None:
+        # 运行参数：目标保留数、最小文本长度、检索池大小、工具调用轮数。
         self.target_top_k = max(1, search_top_k)
         self.min_source_chars = max(100, min_source_chars)
-        search_pool_size = max(self.target_top_k * max(2, oversample_factor), self.target_top_k + 12)
-        self.searcher = ResearchSearcher(top_k=search_pool_size)
+        self.search_pool_size = max(self.target_top_k * max(2, oversample_factor), self.target_top_k + 12)
+        self.max_tool_rounds = max(3, max_tool_rounds)
+
+        # 提示词约束模型按“先搜后存”的工具调用顺序执行。
+        self._prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    "你是多代理论文系统中的 Search subagent。"
+                    "你的任务是：调用工具检索、清洗过滤、再落盘。"
+                    f"必须先调用 `{SEARCH_TOOL_NAME}`，最后调用 `{PERSIST_TOOL_NAME}`。"
+                    "过滤要求：删除无关内容、验证码/403/登录页、过短文本；按 URL 去重。"
+                    "只保留与研究问题相关的来源，数量不超过 target_top_k。"
+                    "请在传给落盘工具的 sources 中提供字段：title/url/query/snippet/raw_text/text_chars。",
+                ),
+                (
+                    "human",
+                    "论文方向：\n{direction}\n\n"
+                    "主查询建议：\n{primary_queries}\n\n"
+                    "约束：target_top_k={target_top_k}, min_source_chars={min_source_chars}, search_pool_size={search_pool_size}\n"
+                    "落盘目录：{run_dir}",
+                ),
+            ]
+        )
+        # 绑定可调用工具并建立 name -> tool 映射。
+        self._tools = [tavily_search_tool, persist_sources_tool]
+        self._tool_map = {tool_item.name: tool_item for tool_item in self._tools}
+        self._llm_with_tools = llm.bind_tools(self._tools)
 
     def run(
         self,
         direction: DirectionResult,
         artifacts_root: Path,
     ) -> tuple[list[CollectedSource], list[SourceArtifact]]:
-        primary_queries = self._build_queries(direction)
-        backup_queries = self._build_backup_queries(direction, primary_queries)
-        docs = self._collect_candidates(primary_queries, backup_queries)
-        if not docs:
-            raise RuntimeError("SearchAgent failed: no search results were retrieved.")
+        # 直接使用 DirectionAgent 产出的关键词作为检索词。
+        primary_queries = direction.keywords
 
         run_dir = self._build_run_dir(artifacts_root)
         run_dir.mkdir(parents=True, exist_ok=True)
 
+        messages = self._prompt.format_messages(
+            direction=_to_json(direction),
+            primary_queries=_to_json(primary_queries),
+            target_top_k=self.target_top_k,
+            min_source_chars=self.min_source_chars,
+            search_pool_size=self.search_pool_size,
+            run_dir=str(run_dir),
+        )
+        # 交给 LLM 执行工具调用循环，拿到落盘结果。
+        persisted_payload = self._run_tool_agent(messages)
+        sources = persisted_payload.get("sources", [])
+        discarded = persisted_payload.get("discarded", [])
+        if not sources:
+            raise RuntimeError("SearchAgent failed: no sources were persisted after filtering.")
+
+        # 把工具输出转成工作流下游所需的结构化对象。
         collected: list[CollectedSource] = []
         artifacts: list[SourceArtifact] = []
-        discarded: list[dict[str, object]] = []
-
-        for doc in docs:
-            source_id = f"S{len(collected) + 1:03d}"
-            normalized_text = self._normalize_source_text(doc.raw_content or doc.snippet)
-            body_text = self._extract_body_text(normalized_text)
-            invalid_reason = self._detect_invalid_text(body_text)
-            if invalid_reason:
-                discarded.append(
-                    {
-                        "title": doc.title,
-                        "url": doc.url,
-                        "query": doc.query,
-                        "text_chars": len(body_text),
-                        "reason": invalid_reason,
-                    }
-                )
-                continue
-            text_chars = len(body_text)
-            if text_chars < self.min_source_chars:
-                discarded.append(
-                    {
-                        "title": doc.title,
-                        "url": doc.url,
-                        "query": doc.query,
-                        "text_chars": text_chars,
-                        "reason": f"text_too_short(<{self.min_source_chars})",
-                    }
-                )
-                continue
-
-            base = f"{source_id}"
-            json_path = run_dir / f"{base}.json"
-            md_path = run_dir / f"{base}.md"
-
-            payload = {
-                "source_id": source_id,
-                "query": doc.query,
-                "title": doc.title,
-                "url": doc.url,
-                "snippet": doc.snippet,
-                "raw_text": body_text,
-                "retrieved_at": datetime.now(timezone.utc).isoformat(),
-            }
-            json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-            md_content = (
-                f"# {doc.title}\n\n"
-                f"- source_id: {source_id}\n"
-                f"- query: {doc.query}\n"
-                f"- url: {doc.url}\n\n"
-                f"## Snippet\n{doc.snippet or 'N/A'}\n\n"
-                f"## Raw Text\n{body_text}\n"
-            )
-            md_path.write_text(md_content, encoding="utf-8")
-
+        for item in sources:
+            json_path = Path(item["json_path"])
+            md_path = Path(item["md_path"])
             collected.append(
                 CollectedSource(
-                    source_id=source_id,
-                    query=doc.query,
-                    title=doc.title,
-                    url=doc.url,
-                    snippet=doc.snippet,
-                    raw_text=body_text,
+                    source_id=item["source_id"],
+                    query=item["query"],
+                    title=item["title"],
+                    url=item["url"],
+                    snippet=item.get("snippet", ""),
+                    raw_text=item["raw_text"],
                     json_path=json_path,
                     md_path=md_path,
                 )
             )
             artifacts.append(
                 SourceArtifact(
-                    source_id=source_id,
-                    title=doc.title,
-                    url=doc.url,
-                    query=doc.query,
+                    source_id=item["source_id"],
+                    title=item["title"],
+                    url=item["url"],
+                    query=item["query"],
                     json_path=str(json_path),
                     md_path=str(md_path),
-                    text_chars=text_chars,
+                    text_chars=int(item.get("text_chars") or len(item["raw_text"])),
                 )
             )
-            if len(collected) >= self.target_top_k:
-                break
 
-        if not collected:
-            raise RuntimeError(
-                "SearchAgent failed: search returned items but none passed the minimum text length filter."
-            )
-
+        # 生成 manifest，记录保留与丢弃来源。
         manifest_path = run_dir / "manifest.json"
         manifest_payload = {
             "topic": direction.refined_topic,
@@ -157,128 +270,64 @@ class SearchAgent:
             "sources": [a.model_dump() for a in artifacts],
             "discarded": discarded,
         }
-        manifest_path.write_text(
-            json.dumps(manifest_payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        manifest_path.write_text(json.dumps(manifest_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
         return collected, artifacts
 
-    @staticmethod
-    def _build_queries(direction: DirectionResult) -> list[str]:
-        keywords = [k.strip() for k in direction.keywords if k.strip()]
-        queries = [
-            direction.refined_topic.strip(),
-            direction.research_question.strip(),
-        ]
-        if keywords:
-            queries.append(" ".join(keywords[:4]))
-            queries.append(f"{direction.research_question.strip()} {' '.join(keywords[:2])}")
+    def _run_tool_agent(self, messages: list[Any]) -> dict[str, Any]:
+        # 通用 tool-calling 循环：模型出工具调用 -> 本地执行 -> 回灌 ToolMessage。
+        state = list(messages)
+        persisted_payload: dict[str, Any] | None = None
 
-        deduped: list[str] = []
-        seen: set[str] = set()
-        for query in queries:
-            if not query or query in seen:
-                continue
-            seen.add(query)
-            deduped.append(query)
-        return deduped[:5]
-
-    @staticmethod
-    def _build_backup_queries(direction: DirectionResult, primary_queries: list[str]) -> list[str]:
-        keywords = [k.strip() for k in direction.keywords if k.strip()]
-        candidates = [
-            f"{direction.research_question.strip()} 综述",
-            f"{direction.refined_topic.strip()} 系统综述",
-            f"{direction.refined_topic.strip()} meta analysis",
-            f"{direction.refined_topic.strip()} guideline report",
-        ]
-        if keywords:
-            candidates.append(" ".join(keywords[:3]) + " review")
-            candidates.append(" ".join(keywords[:3]) + " guideline")
-        deduped: list[str] = []
-        seen = set(primary_queries)
-        for query in candidates:
-            q = query.strip()
-            if not q or q in seen:
-                continue
-            seen.add(q)
-            deduped.append(q)
-        return deduped[:6]
-
-    def _collect_candidates(
-        self,
-        primary_queries: list[str],
-        backup_queries: list[str],
-    ) -> list[SearchDocument]:
-        collected: list[SearchDocument] = []
-        seen_urls: set[str] = set()
-
-        for query_group in [primary_queries, backup_queries]:
-            if not query_group:
-                continue
-            docs = self.searcher.search(query_group)
-            for doc in docs:
-                url = (doc.url or "").strip()
-                if not url or url in seen_urls:
-                    continue
-                seen_urls.add(url)
-                collected.append(doc)
-            if len(collected) >= self.target_top_k * 2:
+        for step in range(1, self.max_tool_rounds + 1):
+            ai_message = self._llm_with_tools.invoke(state)
+            state.append(ai_message)
+            tool_calls = getattr(ai_message, "tool_calls", None) or []
+            if not tool_calls:
                 break
-        return collected
+
+            for idx, tool_call in enumerate(tool_calls, start=1):
+                tool_name = str(tool_call.get("name") or "")
+                tool_call_id = str(tool_call.get("id") or f"call_{step}_{idx}")
+                result = self._execute_tool_call(tool_call)
+                if tool_name == PERSIST_TOOL_NAME:
+                    parsed = self._safe_json_loads(result)
+                    if isinstance(parsed, dict):
+                        persisted_payload = parsed
+                state.append(ToolMessage(content=result, tool_call_id=tool_call_id, name=tool_name))
+
+        if not persisted_payload:
+            raise RuntimeError(f"SearchAgent failed: model did not call `{PERSIST_TOOL_NAME}` successfully.")
+        return persisted_payload
+
+    def _execute_tool_call(self, tool_call: dict[str, Any]) -> str:
+        # 执行单个工具调用并兜底返回错误信息。
+        tool_name = str(tool_call.get("name") or "")
+        args = tool_call.get("args", {})
+        if isinstance(args, str):
+            parsed = self._safe_json_loads(args)
+            args = parsed if isinstance(parsed, dict) else {}
+
+        tool_item = self._tool_map.get(tool_name)
+        if tool_item is None:
+            return json.dumps({"error": f"unknown_tool({tool_name})"}, ensure_ascii=False)
+
+        try:
+            return str(tool_item.invoke(args))
+        except Exception as exc:
+            return json.dumps({"error": f"{tool_name} failed: {exc}"}, ensure_ascii=False)
 
     @staticmethod
-    def _normalize_source_text(text: str) -> str:
-        compact = "\n".join(line.strip() for line in (text or "").splitlines() if line.strip())
-        compact = re.sub(r"\n{3,}", "\n\n", compact)
-        return compact.strip()
-
-    @staticmethod
-    def _extract_body_text(text: str) -> str:
-        if not text:
-            return ""
-        cleaned = re.sub(r"<[^>]+>", " ", text)
-        lines: list[str] = []
-        for raw_line in cleaned.splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-            if re.fullmatch(r"!\[[^\]]*\]\([^)]+\)", line):
-                continue
-            if "javascript:;" in line.lower():
-                continue
-            if re.fullmatch(r"[\*\-\+]\s*\[[^\]]+\]\([^)]+\)", line):
-                continue
-            if re.fullmatch(r"\[[^\]]+\]\([^)]+\)", line):
-                continue
-            if re.search(r"(二维码登录|手机登录|邮箱登录|验证成功|请重试|登录后继续)", line):
-                continue
-            line = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", line).strip()
-            if not line:
-                continue
-            lines.append(line)
-        body = "\n".join(lines)
-        body = re.sub(r"\n{3,}", "\n\n", body)
-        return body.strip()
-
-    @classmethod
-    def _detect_invalid_text(cls, text: str) -> str:
-        lowered = (text or "").lower()
-        if not lowered:
-            return "empty_text_after_cleanup"
-        for token in cls._INVALID_TEXT_PATTERNS:
-            if token in lowered:
-                return f"invalid_text_pattern({token})"
-        lines = [line for line in text.splitlines() if line.strip()]
-        if lines:
-            short_line_count = sum(1 for line in lines if len(line.strip()) <= 10)
-            if short_line_count / len(lines) >= 0.75 and len(text) < 1200:
-                return "invalid_text_mostly_short_lines"
-        return ""
+    def _safe_json_loads(raw: str) -> Any:
+        # 容错 JSON 解析，避免异常中断流程。
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {}
 
     @staticmethod
     def _build_run_dir(artifacts_root: Path) -> Path:
+        # 用 UTC 时间戳隔离每次搜索落盘目录。
         run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         candidate = artifacts_root / run_id
         suffix = 1

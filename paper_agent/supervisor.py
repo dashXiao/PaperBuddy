@@ -28,7 +28,7 @@ class PaperSupervisor:
     ) -> None:
         self.max_retries_per_stage = max_retries_per_stage
         self.direction_agent = DirectionAgent(llm)
-        self.search_agent = SearchAgent(search_top_k=research_top_k)
+        self.search_agent = SearchAgent(llm=llm, search_top_k=research_top_k)
         self.extractor_agent = ExtractorAgent(llm)
         self.outline_agent = OutlineAgent(llm)
         self.writer_agent = WriterAgent(llm)
